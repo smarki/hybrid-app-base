@@ -69,5 +69,78 @@
         </div>
 
         <script src="cordova.js"></script>
+        <script type="text/javascript">
+          window.fetch = async (url, options) => {
+            return new Promise((resolve, reject) => cordova.plugin.http.sendRequest(url, parseOptions(options), (response) => {
+              resolve({
+                ...response,
+                ...{ 
+                      ok: response.status >= 200 && response.status < 300, 
+                      json: () => response.data instanceof Blob ? text(response.data).then(JSON.parse) : JSON.parse(response.data),
+                      text: () => response.data instanceof Blob ? text(response.data) : response.data,
+                      blob: () => response.data instanceof Blob ? response.data : null // TODO validate that returning null is what fetch does
+                    }
+              })
+            }, reject));
+          };
+
+          function parseOptions(options) {
+            if (!options) {
+              return {};
+            }
+
+            var res = { ...options, headers: withCredentialHeader(mapHeaders(options.headers), options.credentials === "include"), responseType: "blob" };
+
+            if (options.body) {
+              res = {...res, ...parseBody(options.body)}
+            }
+
+            return res;
+          }
+          
+          async function text(data) {
+            return new Promise((resolve, reject) => {
+              const fileReader = new FileReader(); 
+              fileReader.onload = (e) => {
+                resolve(e.target.result); 
+              }
+
+              fileReader.onerror = (e) => {
+                throw e;
+              }
+              fileReader.readAsText(data);
+            }) 
+          }
+
+          function parseBody(body) {
+            if (!body) {
+              return {};
+            }
+
+            let data = body;
+            try {
+              data = JSON.parse(body);
+            } catch (e) {}
+
+            return { data, serializer: data instanceof String ? "utf8" : "json" };
+          }
+
+          function withCredentialHeader(headers, shouldAdd) {
+            if (shouldAdd) {
+              return { ...headers, "Access-Control-Allow-Credentials": `${shouldAdd}` }
+            }
+            return headers;
+          }
+
+          function mapHeaders(headers) {
+            if (headers instanceof Headers) {
+              return Array.from(headers.keys()).reduce((headerObject, key) => ({
+                  ...headerObject,
+                  [key]: headers.get(key)
+                }), {});
+            }
+            return headers;
+          }
+        </script>
     </body>
 </html>

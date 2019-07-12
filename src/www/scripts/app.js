@@ -36,36 +36,6 @@ module.exports = (function() {
 
     UserVisibleError.prototype = new Error();
 
-    var request = function(url, params) {
-        var xhr = new XMLHttpRequest(),
-            header;
-
-        xhr.open(params.method, url);
-
-        if (params.onLoad) {
-            xhr.onreadystatechange = function() {
-                if (xhr.readyState !== 4) {
-                    return;
-                }
-
-                params.onLoad(xhr.status, xhr.responseText);
-            };
-        }
-
-        for (header in params.headers) {
-            if (params.headers.hasOwnProperty(header)) {
-                xhr.setRequestHeader(header, params.headers[header]);
-            }
-        }
-
-        if (params.timeout) {
-            xhr.timeout = params.timeout;
-            xhr.ontimeout = params.onTimeout;
-        }
-
-        xhr.send(params.data);
-    };
-
     var showError = function(message, callback) {
         document.getElementById("mxalert_message").textContent = message;
         document.getElementById("mxalert_button").addEventListener("touchstart", function() {
@@ -414,53 +384,33 @@ module.exports = (function() {
         var attempts = 20,
             configUrl = appUrl + "components.json?" + (+new Date());
 
-        function fetchConfig(callback) {
-            request(configUrl, {
-                method: "get",
-                timeout: 5000,
-                onLoad: callback
-            });
+        async function fetchConfig() {
+            const response = await fetch(configUrl);
+            if (response.status == 200) {
+                const json = await response.json();
+                console.log(json);
+                return await response.json();
+            } else if (response.status === 404) {
+                console.log(defaultConfig);
+                return defaultConfig;
+            } else if ( response.status === 503 && --attempts <= 0) {
+                throw new Error();
+            }
+
+            return new Promise((resolve) => setTimeout(resolve(fetchConfig()), 5000));
         }
 
-        return new Promise(function(resolve, reject) {
-            var cb = function(status, result) {
-                if (status === 200) {
-                    resolve(JSON.parse(result));
-                } else if (status === 404) {
-                    // If config is not found, assume the default config
-                    resolve(defaultConfig);
-                } else if (status === 503) {
-                    if (--attempts > 0) {
-                        // If the app is suspended, wait for it to wake up
-                        setTimeout(fetchConfig, 5000, cb);
-                    } else {
-                        reject();
-                    }
-                } else {
-                    reject();
-                }
-            };
-
-            fetchConfig(cb);
-        });
+        return fetchConfig();
     };
 
     var getLocalConfig = function() {
-        return new Promise(function(resolve, reject) {
-            request(resourcesDirectory + "components.json?" + (+new Date()), {
-                method: "GET",
-                onLoad: function(status, result) {
-                    try {
-                        if (result) {
-                            resolve(JSON.parse(result));
-                        } else {
-                            reject(new Error(__("components.json is not available or empty")));
-                        }
-                    } catch (e) {
-                        reject(e);
-                    }
-                }
-            });
+        return fetch(resourcesDirectory + "components.json?" + (+new Date())).then(async response => {
+            if (response.status === 200) {
+                const json = await response.json();
+                console.log(json);
+                return await response.json();
+            } 
+            throw new Error(__("components.json is not available or empty"));
         });
     };
 
@@ -868,15 +818,13 @@ module.exports = (function() {
             throw new Error("Missing username and/or password");
         }
 
-        function doLoginRequest(callback) {
-            request(loginUrl, {
-                timeout: 5000,
-                onLoad: callback,
+        async function doLoginRequest() {
+            const { status } = await fetch(loginUrl, {
                 method: "post",
                 headers: {
                     "Content-Type": "application/json"
                 },
-                data: JSON.stringify({
+                body: JSON.stringify({
                     action: "login",
                     params: {
                         username: username,
@@ -884,26 +832,19 @@ module.exports = (function() {
                     }
                 })
             });
+
+            if (status === 200) {
+                return;
+            } else if (status === 503 && --attempts <= 0) {
+                throw new UserVisibleError("Failed to log in: app is not running");
+            } else if (status !== 200 && status !== 503) {
+                throw new UserVisibleError("Failed to log in");
+            } 
+
+            return new Promise((resolve) => setTimeout(() => resolve(doLoginRequest()), 5000));
         }
 
-        return new Promise(function(resolve, reject) {
-            var cb = function(status, result) {
-                if (status === 200) {
-                    resolve();
-                } else if (status === 503) {
-                    if (--attempts > 0) {
-                        // If the app is suspended, wait for it to wake up
-                        setTimeout(doLoginRequest, 5000, cb);
-                    } else {
-                        reject(new UserVisibleError("Failed to log in: app is not running"));
-                    }
-                } else {
-                    reject(new UserVisibleError("Failed to log in"));
-                }
-            };
-
-            doLoginRequest(cb);
-        });
+        return doLoginRequest();
     };
 
     let emitter = new Emitter();
